@@ -22,7 +22,7 @@ async def on_ready():
 
 # Comando para tocar uma música
 @bot.command()
-async def play(ctx, url: str):
+async def play(ctx, *, query: str):
     # Verifica se o usuário está em um canal de voz
     if not ctx.author.voice:
         await ctx.send(
@@ -36,20 +36,32 @@ async def play(ctx, url: str):
     else:
         vc = ctx.voice_client
 
-    # Obtém o URL de stream
-    ydl_opts = {"format": "bestaudio/best", "quiet": True}
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        stream_url = info["url"]
-        song_title = info.get("title", "música")
+    # Configurações para permitir busca por termos não so url
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "quiet": True,
+        "default_search": "ytsearch",
+    }
 
-    # Reproduz o áudio diretamente
-    vc.play(discord.FFmpegPCMAudio(stream_url), after=lambda e: print(
-        f"{song_title} acabou de tocar!", e))
-    vc.source = discord.PCMVolumeTransformer(vc.source)
-    vc.source.volume = 0.05
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(query, download=False)
+            if 'entries' in info:
+                info = info['entries'][0]
 
-    await ctx.send(f"Tocando agora: **{song_title}**")
+            stream_url = info["url"]
+            song_title = info.get("title", "música")
+
+        # Reproduz o áudio diretamente e para a anterior
+        vc.stop()
+        vc.play(discord.FFmpegPCMAudio(stream_url), after=lambda e: print(
+            f"{song_title} acabou de tocar!", e))
+        vc.source = discord.PCMVolumeTransformer(vc.source)
+        vc.source.volume = 0.5
+
+        await ctx.send(f"Tocando agora: **{song_title}**")
+    except Exception as e:
+        await ctx.send(f"Erro ao tentar reproduzir: {str(e)}")
 
 
 # Comando para desconectar o bot do canal de voz
