@@ -68,6 +68,7 @@ async def play(ctx, *, query: str):
         "format": "bestaudio/best",
         "quiet": True,
         "default_search": "ytsearch",
+        "cookiefile": "cookies.txt"
     }
 
     try:
