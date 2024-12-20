@@ -22,3 +22,4 @@ tomli==2.1.0
 typing_extensions==4.12.2
 yarl==1.18.3
 yt-dlp==2024.12.13
+imageio[ffmpeg] 
