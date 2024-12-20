@@ -18,6 +18,9 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 # Fila de músicas (global para cada servidor)
 music_queues = {}
 
+# Playlists (global para cada servidor)
+playlists = {}
+
 
 @bot.event
 async def on_ready():
@@ -49,7 +52,6 @@ async def play(ctx, *, query: str):
             "Você precisa estar em um canal de voz para usar este comando!")
         return
 
-    # Conecta o bot ao canal de voz do usuário
     voice_channel = ctx.author.voice.channel
     if not ctx.voice_client:
         vc = await voice_channel.connect()
@@ -90,6 +92,203 @@ async def play(ctx, *, query: str):
                     f"Música adicionada à fila: **{song_data['title']}**")
     except Exception as e:
         await ctx.send(f"Erro ao tentar adicionar música: {str(e)}")
+
+
+@bot.command()
+async def create_playlist(ctx, playlist_name: str):
+    guild_id = ctx.guild.id
+    if guild_id not in playlists:
+        playlists[guild_id] = {}
+
+    if playlist_name in playlists[guild_id]:
+        await ctx.send(f"A playlist **{playlist_name}** já existe!")
+    else:
+        playlists[guild_id][playlist_name] = []
+        await ctx.send(f"Playlist **{playlist_name}** criada com sucesso!")
+
+
+@bot.command()
+async def add_to_playlist(ctx, playlist_name: str, *, query: str):
+    guild_id = ctx.guild.id
+    if guild_id not in playlists or playlist_name not in playlists[guild_id]:
+        await ctx.send(
+            (f"A playlist **{playlist_name}** não existe. "
+                f"Use `!create_playlist` para criá-la.")
+        )
+        return
+
+    # Configurações do yt_dlp para busca
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "quiet": True,
+        "default_search": "ytsearch",
+    }
+
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(query, download=False)
+            if 'entries' in info:
+                info = info['entries'][0]
+
+            song_data = {
+                "url": info["url"],
+                "title": info.get("title", "música"),
+            }
+            playlists[guild_id][playlist_name].append(song_data)
+            await ctx.send(
+                f"Música **{song_data['title']}** adicionada à playlist "
+                f"**{playlist_name}**!"
+            )
+    except Exception as e:
+        await ctx.send(f"Erro ao adicionar música à playlist: {str(e)}")
+
+
+@bot.command()
+async def show_playlist(ctx, playlist_name: str):
+    guild_id = ctx.guild.id
+    if guild_id not in playlists or playlist_name not in playlists[guild_id]:
+        await ctx.send(f"A playlist **{playlist_name}** não existe.")
+        return
+
+    playlist = playlists[guild_id][playlist_name]
+    if not playlist:
+        await ctx.send(f"A playlist **{playlist_name}** está vazia.")
+    else:
+        song_list = [
+            f"{i + 1}. {song['title']}" for i, song in enumerate(playlist)]
+        await ctx.send(
+            f"Playlist **{playlist_name}**:\n" + "\n".join(song_list))
+
+
+@bot.command()
+async def play_playlist(ctx, playlist_name: str):
+    guild_id = ctx.guild.id
+    if guild_id not in playlists or playlist_name not in playlists[guild_id]:
+        await ctx.send(f"A playlist **{playlist_name}** não existe.")
+        return
+
+    playlist = playlists[guild_id][playlist_name]
+    if not playlist:
+        await ctx.send(f"A playlist **{playlist_name}** está vazia.")
+        return
+
+    if not ctx.author.voice:
+        await ctx.send(
+            "Você precisa estar em um canal de voz para usar este comando!")
+        return
+
+    voice_channel = ctx.author.voice.channel
+    if not ctx.voice_client:
+        vc = await voice_channel.connect()
+    else:
+        vc = ctx.voice_client
+
+    # Adiciona todas as músicas da playlist à fila
+    if guild_id not in music_queues:
+        music_queues[guild_id] = deque()
+
+    for song in playlist:
+        music_queues[guild_id].append(song)
+
+    await ctx.send(f"Tocando a playlist **{playlist_name}**!")
+    if not vc.is_playing():
+        play_next(vc, guild_id)
+
+
+# Comando para deletar uma música de uma playlist
+@bot.command()
+async def delete_song(ctx, playlist_name: str):
+    guild_id = ctx.guild.id
+    if guild_id not in playlists or playlist_name not in playlists[guild_id]:
+        await ctx.send(f"A playlist **{playlist_name}** não existe.")
+        return
+
+    playlist = playlists[guild_id][playlist_name]
+    if not playlist:
+        await ctx.send(f"A playlist **{playlist_name}** está vazia.")
+        return
+
+    # Exibe as músicas da playlist enumeradas
+    song_list = [
+        f"{i + 1}. {song['title']}" for i, song in enumerate(playlist)]
+    await ctx.send(f"Playlist **{playlist_name}**:\n" + "\n".join(song_list))
+    await ctx.send("Digite o número da música que você deseja deletar:")
+
+    # Aguarda a resposta do usuário
+    def check(msg):
+        return msg.author == ctx.author and msg.channel == ctx.channel
+
+    try:
+        response = await bot.wait_for("message", check=check, timeout=30.0)
+        choice = int(response.content)
+
+        if choice < 1 or choice > len(playlist):
+            await ctx.send("Número inválido. Operação cancelada.")
+            return
+
+        selected_song = playlist[choice - 1]
+
+        # Confirmação de exclusão
+        await ctx.send(
+            f"Você deseja deletar **{selected_song['title']}**? "
+            f"(Responda com `sim` ou `não`)")
+
+        confirmation = await bot.wait_for("message", check=check, timeout=30.0)
+        if confirmation.content.lower() == "sim":
+            del playlist[choice - 1]
+            await ctx.send(
+                f"Música **{selected_song['title']}** deletada da playlist **"
+                f"{playlist_name}**.")
+        else:
+            await ctx.send("Operação cancelada.")
+    except ValueError:
+        await ctx.send("Por favor, digite um número válido.")
+    except TimeoutError:
+        await ctx.send("Tempo esgotado. Operação cancelada.")
+
+
+# Comando para selecionar e tocar uma playlist
+@bot.command()
+async def show_all_playlists(ctx):
+    guild_id = ctx.guild.id
+    if guild_id not in playlists or not playlists[guild_id]:
+        await ctx.send("Não há playlists disponíveis no momento.")
+        return
+
+    # Exibe todas as playlists enumeradas
+    playlist_names = list(playlists[guild_id].keys())
+    enumerated_playlists = [
+        f"{i + 1}. {name}" for i, name in enumerate(playlist_names)]
+    await ctx.send(
+        "Playlists disponíveis:\n" + "\n".join(enumerated_playlists))
+    await ctx.send("Digite o número da playlist que você deseja tocar:")
+
+    # Aguarda a resposta do usuário
+    def check(msg):
+        return msg.author == ctx.author and msg.channel == ctx.channel
+
+    try:
+        response = await bot.wait_for("message", check=check, timeout=30.0)
+        choice = int(response.content)
+
+        if choice < 1 or choice > len(playlist_names):
+            await ctx.send("Número inválido. Operação cancelada.")
+            return
+
+        selected_playlist_name = playlist_names[choice - 1]
+        await ctx.send(
+            f"Você deseja tocar a playlist **{selected_playlist_name}**?"
+            f"(Responda com `sim` ou `não`)")
+
+        confirmation = await bot.wait_for("message", check=check, timeout=30.0)
+        if confirmation.content.lower() == "sim":
+            await play_playlist(ctx, selected_playlist_name)
+        else:
+            await ctx.send("Operação cancelada.")
+    except ValueError:
+        await ctx.send("Por favor, digite um número válido.")
+    except TimeoutError:
+        await ctx.send("Tempo esgotado. Operação cancelada.")
 
 
 # Comando para mostrar as músicas na fila
